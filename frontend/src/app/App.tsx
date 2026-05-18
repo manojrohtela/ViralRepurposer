@@ -82,6 +82,7 @@ function ResultPanel({ activeTab, result }: { activeTab: Tab; result: ViralConte
 
 export default function App() {
   const [url, setUrl] = useState('');
+  const [manualTranscript, setManualTranscript] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('shorts');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +98,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const data = await generateViralContent(url.trim());
+      const data = await generateViralContent(url.trim(), manualTranscript);
       setResult(data);
       setActiveTab('shorts');
     } catch (err) {
@@ -149,6 +150,20 @@ export default function App() {
                 </div>
               </div>
 
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Transcript fallback</label>
+                <textarea
+                  value={manualTranscript}
+                  onChange={(event) => setManualTranscript(event.target.value)}
+                  rows={7}
+                  placeholder="Paste the transcript here for age-restricted, members-only, private, or blocked videos."
+                  className="w-full resize-none rounded-xl border border-slate-700/50 bg-slate-950/60 px-4 py-3 text-sm leading-6 text-white outline-none transition-colors placeholder:text-slate-500 focus:border-indigo-500/60"
+                />
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Optional. If filled, the agent skips YouTube transcript extraction and repurposes this text directly.
+                </p>
+              </div>
+
               {error && (
                 <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -170,6 +185,7 @@ export default function App() {
                 onClick={() => {
                   setResult(null);
                   setUrl('');
+                  setManualTranscript('');
                   setError(null);
                 }}
                 className="mt-4 flex items-center gap-2 text-sm text-slate-400 transition-colors hover:text-white"

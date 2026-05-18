@@ -49,7 +49,11 @@ async function callOracle(payload: Record<string, unknown>): Promise<ViralConten
   return response.json() as Promise<ViralContentResponse>;
 }
 
-export async function generateViralContent(url: string): Promise<ViralContentResponse> {
+export async function generateViralContent(url: string, manualTranscript = ''): Promise<ViralContentResponse> {
+  if (manualTranscript.trim()) {
+    return callOracle({ url, manualTranscript: manualTranscript.trim() });
+  }
+
   // Step 1: Vercel proxy scrapes the YouTube watch page for signed caption track URLs
   const trackRes = await fetch(`/api/transcript?url=${encodeURIComponent(url)}`);
 

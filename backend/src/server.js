@@ -17,7 +17,7 @@ const CHUNK_CHARS = 12000;
 
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || "*" }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "8mb" }));
 
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
@@ -64,9 +64,14 @@ app.post("/api/viral-content/generate", async (req, res) => {
       return res.status(400).json({ error: "Please provide a valid YouTube video URL." });
     }
 
+    const manualTranscript = String(req.body?.manualTranscript || "").trim();
+
     // Accept pre-fetched transcript from browser (avoids server-side bot detection)
     const prefetched = Array.isArray(req.body?.transcript) ? req.body.transcript : null;
-    const transcript = prefetched ?? await fetchTranscript(url);
+    const transcript = manualTranscript
+      ? transcriptFromPlainText(manualTranscript)
+      : prefetched ?? await fetchTranscript(url);
+
     if (!transcript.length) {
       return res.status(422).json({ error: "No transcript was found for this video." });
     }
@@ -90,7 +95,7 @@ app.post("/api/viral-content/generate", async (req, res) => {
   } catch (error) {
     console.error(error);
     const message = error instanceof Error ? error.message : "Failed to repurpose content.";
-    res.status(500).json({ error: message });
+    res.status(isAccessRestriction(message) ? 422 : 500).json({ error: message });
   }
 });
 
@@ -127,13 +132,13 @@ async function fetchTranscript(url) {
       await execFileAsync("yt-dlp", ytdlpArgs, { timeout: 30000 });
     } catch (e) {
       const stderr = e.stderr || e.message || "";
-      if (/Sign in to confirm|bot|login required/i.test(stderr)) {
-        throw new Error("YouTube is blocking automated access for this video. This can happen with certain public videos from datacenter IPs. Please try a popular English-language YouTube video instead.");
+      if (/age.?restricted|members.?only|private|Sign in to confirm|login required|not a bot|bot/i.test(stderr)) {
+        throw new Error("This video is age-restricted, members-only, private, or blocked by YouTube. Paste the transcript manually to repurpose it without YouTube access.");
       }
       if (/No subtitles|no.*transcript|transcript.*disabled/i.test(stderr)) {
-        throw new Error("No transcript is available for this video.");
+        throw new Error("No transcript is available for this video. Paste a transcript manually to continue.");
       }
-      throw new Error("Could not fetch transcript. The video may be private, region-locked, or unavailable.");
+      throw new Error("Could not fetch transcript. The video may be private, region-locked, restricted, or unavailable. Paste the transcript manually to continue.");
     }
 
     const files = await readdir(tmpDir);
@@ -152,6 +157,17 @@ async function fetchTranscript(url) {
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
+}
+
+function transcriptFromPlainText(text) {
+  return text
+    .split(/\n+/)
+    .map((line, index) => ({
+      text: cleanText(line),
+      offset: index * 5000,
+      duration: 5000,
+    }))
+    .filter((row) => row.text);
 }
 
 function formatTranscript(rows) {
@@ -251,6 +267,10 @@ function normalizeResult(data) {
     linkedinPost: typeof data.linkedinPost === "string" ? data.linkedinPost : "",
     twitterThread: Array.isArray(data.twitterThread) ? data.twitterThread : [],
   };
+}
+
+function isAccessRestriction(message) {
+  return /age.?restricted|members.?only|private|blocked|no transcript|restricted|unavailable/i.test(message);
 }
 
 app.listen(PORT, "0.0.0.0", () => {
