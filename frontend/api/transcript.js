@@ -49,8 +49,9 @@ async function getPlayerData(videoId) {
 
   const html = await res.text();
 
-  // ytInitialPlayerResponse is a JS variable assignment in the page
-  const MARKER = 'ytInitialPlayerResponse=';
+  // YouTube assigns the variable as "var ytInitialPlayerResponse = {...}"
+  // Use the bare name and then seek to the first { that follows
+  const MARKER = 'ytInitialPlayerResponse';
   const markerIdx = html.indexOf(MARKER);
   if (markerIdx === -1) throw new Error('Could not parse YouTube page (marker missing).');
 
