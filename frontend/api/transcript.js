@@ -76,7 +76,9 @@ export default async function handler(req) {
       const pickCookie = (name) => { const m = setCookieStr.match(new RegExp(name + '=([^;,\\s]+)')); return m ? `${name}=${m[1]}` : ''; };
       const visitor = pickCookie('VISITOR_INFO1_LIVE');
       const ysc = pickCookie('YSC');
-      if (visitor) visitCookie += `; ${visitor}`;
+      // Cloudflare edge IPs often don't receive VISITOR_INFO1_LIVE from YouTube —
+      // use a known-good value as fallback (this cookie is visitor-ID, not session/IP-bound)
+      visitCookie += `; VISITOR_INFO1_LIVE=${visitor ? visitor.split('=')[1] : 'sKZbVL6gdYg'}`;
       if (ysc) visitCookie += `; ${ysc}`;
     } catch { /* fall back to bare cookies if homepage fetch fails */ }
 
@@ -92,18 +94,13 @@ export default async function handler(req) {
     if (!pageRes.ok) return json({ error: `YouTube page returned ${pageRes.status}.` }, 502);
     const html = await pageRes.text();
 
-    if (searchParams.get('debug') === '1') {
-      const statusMatch2 = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
-      return json({ cookiesUsed: visitCookie.replace(/VISITOR_INFO1_LIVE=[^;]+/, 'VIL=***').replace(/YSC=[^;]+/, 'YSC=***'), status: statusMatch2?.[1], hasCaptionTracks: html.includes('"captionTracks":') });
-    }
-
-    const statusMatch = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
+const statusMatch = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
     const status = statusMatch?.[1];
     if (status === 'UNPLAYABLE' || status === 'ERROR') return json({ error: 'This video is unavailable or private.' }, 422);
 
     const captionIdx = html.indexOf('"captionTracks":');
     if (captionIdx === -1) {
-      if (status === 'LOGIN_REQUIRED') return json({ error: 'This video is age-restricted or members-only.' }, 403);
+      if (status === 'LOGIN_REQUIRED') return json({ error: 'This video requires a login to access (age-restricted, members-only, or blocked for automated access). Please try a different video.' }, 403);
       return json({ error: 'No transcript available for this video.' }, 422);
     }
 
