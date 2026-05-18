@@ -121,7 +121,18 @@ async function fetchTranscript(url) {
     if (cookiesPath) ytdlpArgs.push("--cookies", cookiesPath);
 
     ytdlpArgs.push(url);
-    await execFileAsync("yt-dlp", ytdlpArgs, { timeout: 30000 });
+    try {
+      await execFileAsync("yt-dlp", ytdlpArgs, { timeout: 30000 });
+    } catch (e) {
+      const stderr = e.stderr || e.message || "";
+      if (/Sign in to confirm|bot|login required/i.test(stderr)) {
+        throw new Error("This video is age-restricted or members-only and cannot be accessed.");
+      }
+      if (/No subtitles|no.*transcript|transcript.*disabled/i.test(stderr)) {
+        throw new Error("No transcript is available for this video.");
+      }
+      throw new Error("Could not fetch transcript. The video may be private, region-locked, or unavailable.");
+    }
 
     const files = await readdir(tmpDir);
     const subFile = files.find((f) => f.endsWith(".json3"));
