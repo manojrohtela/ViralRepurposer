@@ -92,6 +92,11 @@ export default async function handler(req) {
     if (!pageRes.ok) return json({ error: `YouTube page returned ${pageRes.status}.` }, 502);
     const html = await pageRes.text();
 
+    if (searchParams.get('debug') === '1') {
+      const statusMatch2 = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
+      return json({ cookiesUsed: visitCookie.replace(/VISITOR_INFO1_LIVE=[^;]+/, 'VIL=***').replace(/YSC=[^;]+/, 'YSC=***'), status: statusMatch2?.[1], hasCaptionTracks: html.includes('"captionTracks":') });
+    }
+
     const statusMatch = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
     const status = statusMatch?.[1];
     if (status === 'UNPLAYABLE' || status === 'ERROR') return json({ error: 'This video is unavailable or private.' }, 422);
