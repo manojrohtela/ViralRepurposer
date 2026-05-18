@@ -79,8 +79,10 @@ export default async function handler(req, res) {
       if (enTrack?.baseUrl) {
         try {
           const cr = await fetch(`${enTrack.baseUrl}&fmt=json3`);
-          const cd = await cr.json();
-          captionTest = { status: cr.status, events: cd.events?.length ?? 0, firstEvent: cd.events?.[0] };
+          const bodyText = await cr.text();
+          let cd = null;
+          try { cd = JSON.parse(bodyText); } catch {}
+          captionTest = { status: cr.status, contentType: cr.headers.get('content-type'), bodyLen: bodyText.length, bodyFirst200: bodyText.slice(0, 200), events: cd?.events?.length ?? 0 };
         } catch (e) { captionTest = { error: e.message }; }
       }
       return res.status(200).json({ htmlLen: html.length, captionIdx, rawLen: raw?.length, enTrackUrl: enTrack?.baseUrl?.slice(0, 120), captionTest });
