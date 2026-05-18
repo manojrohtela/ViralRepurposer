@@ -74,7 +74,16 @@ export default async function handler(req, res) {
       const raw = arrayStart !== -1 ? extractJsonArray(html, arrayStart) : null;
       let parseResult = null;
       if (raw) { try { parseResult = JSON.parse(raw); } catch (e) { parseResult = { error: e.message, rawLast100: raw.slice(-100) }; } }
-      return res.status(200).json({ htmlLen: html.length, captionIdx, arrayStart, rawLen: raw?.length, parseResult: parseResult ? (Array.isArray(parseResult) ? parseResult.map(t => ({ lang: t.languageCode, url: t.baseUrl?.slice(0, 60) })) : parseResult) : null });
+      const enTrack = Array.isArray(parseResult) ? (parseResult.find(t => t.languageCode?.startsWith('en')) ?? parseResult[0]) : null;
+      let captionTest = null;
+      if (enTrack?.baseUrl) {
+        try {
+          const cr = await fetch(`${enTrack.baseUrl}&fmt=json3`);
+          const cd = await cr.json();
+          captionTest = { status: cr.status, events: cd.events?.length ?? 0, firstEvent: cd.events?.[0] };
+        } catch (e) { captionTest = { error: e.message }; }
+      }
+      return res.status(200).json({ htmlLen: html.length, captionIdx, rawLen: raw?.length, enTrackUrl: enTrack?.baseUrl?.slice(0, 120), captionTest });
     }
 
     // Check playability status with a simple regex
