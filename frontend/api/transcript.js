@@ -24,12 +24,20 @@ function cleanText(text) {
 }
 
 // Extract the first complete JSON object starting at `start` in `html`.
+// String-aware so that { and } inside quoted values don't throw off counting.
 function extractJson(html, start) {
-  let depth = 0, i = start;
+  let depth = 0, i = start, inStr = false, esc = false;
   while (i < html.length) {
     const c = html[i];
-    if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return html.slice(start, i + 1); }
+    if (esc) { esc = false; }
+    else if (inStr) {
+      if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+    } else {
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) return html.slice(start, i + 1); }
+    }
     i++;
   }
   return null;
