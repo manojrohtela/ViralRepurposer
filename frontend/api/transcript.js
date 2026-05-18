@@ -66,11 +66,17 @@ export default async function handler(req, res) {
 
     const statusMatch = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
     const status = statusMatch?.[1];
-    if (status === 'LOGIN_REQUIRED') return res.status(403).json({ error: 'This video is age-restricted or members-only.' });
+    // UNPLAYABLE/ERROR are hard failures — video is truly unavailable
     if (status === 'UNPLAYABLE' || status === 'ERROR') return res.status(422).json({ error: 'This video is unavailable or private.' });
+    // LOGIN_REQUIRED from a datacenter IP can be a false positive (bot detection, not true age restriction).
+    // Try to get captionTracks anyway — if they're present the browser can fetch them with its own cookies.
 
     const captionIdx = html.indexOf('"captionTracks":');
-    if (captionIdx === -1) return res.status(422).json({ error: 'No transcript available for this video.' });
+    // Only fall back to age-restricted error if captions are genuinely absent
+    if (captionIdx === -1) {
+      if (status === 'LOGIN_REQUIRED') return res.status(403).json({ error: 'This video is age-restricted or members-only.' });
+      return res.status(422).json({ error: 'No transcript available for this video.' });
+    }
 
     const arrayStart = html.indexOf('[', captionIdx);
     if (arrayStart === -1) return res.status(422).json({ error: 'No transcript available for this video.' });
