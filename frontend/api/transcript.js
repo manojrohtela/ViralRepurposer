@@ -104,7 +104,16 @@ export default async function handler(req, res) {
         pageTitle: html.match(/<title>([^<]+)<\/title>/)?.[1] ?? 'N/A',
         markerContext: (() => {
           const idx = html.indexOf('ytInitialPlayerResponse');
-          return idx !== -1 ? html.slice(idx, idx + 150) : 'not found';
+          if (idx === -1) return 'not found';
+          const jsonStart = html.indexOf('{', idx);
+          const raw = extractJson(html, jsonStart);
+          return {
+            text: html.slice(idx, idx + 150),
+            jsonStart,
+            rawLength: raw ? raw.length : 0,
+            rawFirst50: raw ? raw.slice(0, 50) : 'null',
+            rawLast50: raw ? raw.slice(-50) : 'null',
+          };
         })(),
       });
     }
