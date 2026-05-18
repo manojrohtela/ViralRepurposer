@@ -1,0 +1,27 @@
+name: Deploy Backend to Oracle
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Oracle
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: GH_PAT
+          script: |
+            set -e
+            cd /home/ubuntu/agents/viralrepurposer
+            git pull https://$GH_PAT@github.com/manojrohtela/ViralRepurposer.git main
+            cd backend
+            npm install --production
+            sudo systemctl restart viralrepurposer
+            echo "✅ viralrepurposer deployed successfully"
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
