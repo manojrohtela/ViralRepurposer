@@ -2,6 +2,13 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import Groq from "groq-sdk";
+import { execFile } from "child_process";
+import { mkdtemp, readdir, readFile, rm } from "fs/promises";
+import { promisify } from "util";
+import path from "path";
+import os from "os";
+
+const execFileAsync = promisify(execFile);
 
 const PORT = Number(process.env.PORT || 8012);
 const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
@@ -94,62 +101,43 @@ function isYouTubeUrl(value) {
   }
 }
 
-function extractVideoId(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === "youtu.be") return parsed.pathname.slice(1);
-    return parsed.searchParams.get("v") || null;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchTranscript(url) {
-  const videoId = extractVideoId(url);
-  if (!videoId) throw new Error("Could not extract video ID from URL.");
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "vr-"));
+  try {
+    const ytdlpArgs = [
+      "--write-auto-subs",
+      "--write-subs",
+      "--sub-langs", "en",
+      "--sub-format", "json3",
+      "--skip-download",
+      "--no-warnings",
+      "--quiet",
+      "-o", path.join(tmpDir, "%(id)s"),
+    ];
 
-  // Use YouTube's InnerTube API (ANDROID client bypasses most restrictions)
-  const playerRes = await fetch("https://www.youtube.com/youtubei/v1/player", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
-      "X-YouTube-Client-Name": "3",
-      "X-YouTube-Client-Version": "19.09.37",
-    },
-    body: JSON.stringify({
-      videoId,
-      context: {
-        client: {
-          clientName: "ANDROID",
-          clientVersion: "19.09.37",
-          androidSdkVersion: 30,
-          hl: "en",
-          gl: "US",
-        },
-      },
-    }),
-  });
+    // Use YouTube cookies if configured (required for datacenter IPs)
+    const cookiesPath = process.env.YTDLP_COOKIES;
+    if (cookiesPath) ytdlpArgs.push("--cookies", cookiesPath);
 
-  if (!playerRes.ok) throw new Error(`YouTube player API error: ${playerRes.status}`);
-  const playerData = await playerRes.json();
+    ytdlpArgs.push(url);
+    await execFileAsync("yt-dlp", ytdlpArgs, { timeout: 30000 });
 
-  const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-  if (!tracks?.length) throw new Error("No transcript available for this video.");
+    const files = await readdir(tmpDir);
+    const subFile = files.find((f) => f.endsWith(".json3"));
+    if (!subFile) throw new Error("No transcript found for this video.");
 
-  const track = tracks.find((t) => t.languageCode?.startsWith("en")) || tracks[0];
-  const captionRes = await fetch(`${track.baseUrl}&fmt=json3`);
-  if (!captionRes.ok) throw new Error("Failed to fetch caption data.");
-
-  const captionData = await captionRes.json();
-  return (captionData.events || [])
-    .filter((e) => e.segs?.length)
-    .map((e) => ({
-      text: cleanText(e.segs.map((s) => s.utf8 || "").join("")),
-      offset: e.tStartMs ?? 0,
-      duration: e.dDurationMs ?? 0,
-    }))
-    .filter((e) => e.text);
+    const data = JSON.parse(await readFile(path.join(tmpDir, subFile), "utf8"));
+    return (data.events || [])
+      .filter((e) => e.segs?.length)
+      .map((e) => ({
+        text: cleanText(e.segs.map((s) => s.utf8 || "").join("")),
+        offset: e.tStartMs ?? 0,
+        duration: e.dDurationMs ?? 0,
+      }))
+      .filter((e) => e.text);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 function formatTranscript(rows) {
