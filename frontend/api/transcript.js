@@ -58,11 +58,34 @@ export default async function handler(req) {
   if (!videoId) return json({ error: 'Invalid YouTube URL.' }, 400);
 
   try {
+    // Step 1: get fresh YouTube cookies (VISITOR_INFO1_LIVE, YSC) by visiting homepage.
+    // Without these, some public videos return LOGIN_REQUIRED from datacenter IPs.
+    let visitCookie = 'CONSENT=YES+cb; GPS=1';
+    try {
+      const homeRes = await fetch('https://www.youtube.com/', {
+        redirect: 'follow',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cookie': visitCookie,
+        },
+      });
+      // Collect cookies YouTube issues on first visit
+      const setCookie = homeRes.headers.get('set-cookie') ?? '';
+      const extras = setCookie.split(',')
+        .map((s) => s.trim().split(';')[0])
+        .filter((s) => s.includes('=') && !s.startsWith('__'))
+        .join('; ');
+      if (extras) visitCookie = `${visitCookie}; ${extras}`;
+    } catch { /* fall back to bare cookies if homepage fetch fails */ }
+
+    // Step 2: fetch the watch page with the fresh cookies
     const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': 'CONSENT=YES+cb; GPS=1',
+        'Cookie': visitCookie,
       },
     });
 
