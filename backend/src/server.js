@@ -64,7 +64,9 @@ app.post("/api/viral-content/generate", async (req, res) => {
       return res.status(400).json({ error: "Please provide a valid YouTube video URL." });
     }
 
-    const transcript = await fetchTranscript(url);
+    // Accept pre-fetched transcript from browser (avoids server-side bot detection)
+    const prefetched = Array.isArray(req.body?.transcript) ? req.body.transcript : null;
+    const transcript = prefetched ?? await fetchTranscript(url);
     if (!transcript.length) {
       return res.status(422).json({ error: "No transcript was found for this video." });
     }
