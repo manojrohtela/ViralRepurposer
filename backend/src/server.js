@@ -105,6 +105,7 @@ async function fetchTranscript(url) {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "vr-"));
   try {
     const ytdlpArgs = [
+      "--js-runtimes", "node",
       "--write-auto-subs",
       "--write-subs",
       "--sub-langs", "en",
