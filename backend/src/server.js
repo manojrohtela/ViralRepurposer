@@ -128,7 +128,7 @@ async function fetchTranscript(url) {
     } catch (e) {
       const stderr = e.stderr || e.message || "";
       if (/Sign in to confirm|bot|login required/i.test(stderr)) {
-        throw new Error("This video is age-restricted or members-only and cannot be accessed.");
+        throw new Error("YouTube is blocking automated access for this video. This can happen with certain public videos from datacenter IPs. Please try a popular English-language YouTube video instead.");
       }
       if (/No subtitles|no.*transcript|transcript.*disabled/i.test(stderr)) {
         throw new Error("No transcript is available for this video.");

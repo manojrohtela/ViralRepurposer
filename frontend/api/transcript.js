@@ -100,7 +100,7 @@ const statusMatch = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
 
     const captionIdx = html.indexOf('"captionTracks":');
     if (captionIdx === -1) {
-      if (status === 'LOGIN_REQUIRED') return json({ error: 'This video requires a login to access (age-restricted, members-only, or blocked for automated access). Please try a different video.' }, 403);
+      if (status === 'LOGIN_REQUIRED') return json({ error: 'YouTube is blocking automated access for this video. This can happen with certain public videos from datacenter IPs. Please try a popular English-language YouTube video instead.' }, 403);
       return json({ error: 'No transcript available for this video.' }, 422);
     }
 
