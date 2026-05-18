@@ -58,8 +58,8 @@ export default async function handler(req) {
   if (!videoId) return json({ error: 'Invalid YouTube URL.' }, 400);
 
   try {
-    // Step 1: get fresh YouTube cookies (VISITOR_INFO1_LIVE, YSC) by visiting homepage.
-    // Without these, some public videos return LOGIN_REQUIRED from datacenter IPs.
+    // Step 1: get fresh YouTube cookies (VISITOR_INFO1_LIVE, YSC) by visiting the homepage.
+    // Without these, some public videos return LOGIN_REQUIRED from cloud/datacenter IPs.
     let visitCookie = 'CONSENT=YES+cb; GPS=1';
     try {
       const homeRes = await fetch('https://www.youtube.com/', {
@@ -71,13 +71,13 @@ export default async function handler(req) {
           'Cookie': visitCookie,
         },
       });
-      // Collect cookies YouTube issues on first visit
-      const setCookie = homeRes.headers.get('set-cookie') ?? '';
-      const extras = setCookie.split(',')
-        .map((s) => s.trim().split(';')[0])
-        .filter((s) => s.includes('=') && !s.startsWith('__'))
-        .join('; ');
-      if (extras) visitCookie = `${visitCookie}; ${extras}`;
+      // Set-Cookie headers can have commas in expires dates, so split by name= patterns
+      const setCookieStr = homeRes.headers.get('set-cookie') ?? '';
+      const pickCookie = (name) => { const m = setCookieStr.match(new RegExp(name + '=([^;,\\s]+)')); return m ? `${name}=${m[1]}` : ''; };
+      const visitor = pickCookie('VISITOR_INFO1_LIVE');
+      const ysc = pickCookie('YSC');
+      if (visitor) visitCookie += `; ${visitor}`;
+      if (ysc) visitCookie += `; ${ysc}`;
     } catch { /* fall back to bare cookies if homepage fetch fails */ }
 
     // Step 2: fetch the watch page with the fresh cookies
