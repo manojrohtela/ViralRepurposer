@@ -1,5 +1,5 @@
 // Vercel serverless function — proxies YouTube InnerTube API to avoid browser CORS blocks.
-// Runs on Vercel's infrastructure (different IPs from Oracle).
+// Uses Android client user-agent which bypasses datacenter IP bot detection.
 
 export const config = { maxDuration: 20 };
 
@@ -24,7 +24,6 @@ function cleanText(text) {
 }
 
 export default async function handler(req, res) {
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS).end();
     return;
@@ -39,19 +38,28 @@ export default async function handler(req, res) {
   if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL.' });
 
   try {
-    const playerRes = await fetch(
-      'https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoId,
-          context: {
-            client: { clientName: 'WEB', clientVersion: '2.20241209.01.00', hl: 'en', gl: 'US' },
-          },
-        }),
+    // Android client bypasses datacenter IP bot-blocking that WEB client triggers
+    const playerRes = await fetch('https://www.youtube.com/youtubei/v1/player', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
+        'X-Goog-Api-Format-Version': '2',
       },
-    );
+      body: JSON.stringify({
+        videoId,
+        context: {
+          client: {
+            clientName: 'ANDROID',
+            clientVersion: '19.09.37',
+            androidSdkVersion: 30,
+            hl: 'en',
+            gl: 'US',
+            utcOffsetMinutes: 0,
+          },
+        },
+      }),
+    });
 
     if (!playerRes.ok) return res.status(502).json({ error: `YouTube returned ${playerRes.status}.` });
     const playerData = await playerRes.json();
