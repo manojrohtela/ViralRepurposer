@@ -1,5 +1,5 @@
-// Vercel serverless function — proxies YouTube InnerTube API to avoid browser CORS blocks.
-// Uses Android client user-agent which bypasses datacenter IP bot detection.
+// Vercel serverless function — fetches YouTube transcript by scraping the watch page.
+// Avoids InnerTube API bot-detection that blocks datacenter IPs (Vercel/Oracle).
 
 export const config = { maxDuration: 20 };
 
@@ -23,6 +23,46 @@ function cleanText(text) {
   return text.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
 }
 
+// Extract the first complete JSON object starting at `start` in `html`.
+function extractJson(html, start) {
+  let depth = 0, i = start;
+  while (i < html.length) {
+    const c = html[i];
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return html.slice(start, i + 1); }
+    i++;
+  }
+  return null;
+}
+
+async function getPlayerData(videoId) {
+  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+      // Accept YouTube's consent so we don't get the GDPR wall
+      'Cookie': 'CONSENT=YES+cb; GPS=1; VISITOR_INFO1_LIVE=; YSC=',
+    },
+  });
+
+  if (!res.ok) throw new Error(`YouTube page returned ${res.status}.`);
+
+  const html = await res.text();
+
+  // ytInitialPlayerResponse is a JS variable assignment in the page
+  const MARKER = 'ytInitialPlayerResponse=';
+  const markerIdx = html.indexOf(MARKER);
+  if (markerIdx === -1) throw new Error('Could not parse YouTube page (marker missing).');
+
+  const jsonStart = html.indexOf('{', markerIdx);
+  if (jsonStart === -1) throw new Error('Could not parse YouTube page (JSON start missing).');
+
+  const raw = extractJson(html, jsonStart);
+  if (!raw) throw new Error('Could not parse YouTube page (JSON extraction failed).');
+
+  return JSON.parse(raw);
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS).end();
@@ -38,31 +78,7 @@ export default async function handler(req, res) {
   if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL.' });
 
   try {
-    // Android client bypasses datacenter IP bot-blocking that WEB client triggers
-    const playerRes = await fetch('https://www.youtube.com/youtubei/v1/player', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip',
-        'X-Goog-Api-Format-Version': '2',
-      },
-      body: JSON.stringify({
-        videoId,
-        context: {
-          client: {
-            clientName: 'ANDROID',
-            clientVersion: '19.09.37',
-            androidSdkVersion: 30,
-            hl: 'en',
-            gl: 'US',
-            utcOffsetMinutes: 0,
-          },
-        },
-      }),
-    });
-
-    if (!playerRes.ok) return res.status(502).json({ error: `YouTube returned ${playerRes.status}.` });
-    const playerData = await playerRes.json();
+    const playerData = await getPlayerData(videoId);
 
     const status = playerData?.playabilityStatus?.status;
     if (status === 'LOGIN_REQUIRED') return res.status(403).json({ error: 'This video is age-restricted or members-only.' });
