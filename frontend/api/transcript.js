@@ -102,7 +102,10 @@ export default async function handler(req, res) {
         hasMarker: html.includes('ytInitialPlayerResponse'),
         hasConsentWall: html.includes('consent.youtube.com'),
         pageTitle: html.match(/<title>([^<]+)<\/title>/)?.[1] ?? 'N/A',
-        first500: html.slice(0, 500),
+        markerContext: (() => {
+          const idx = html.indexOf('ytInitialPlayerResponse');
+          return idx !== -1 ? html.slice(idx, idx + 150) : 'not found';
+        })(),
       });
     }
 
