@@ -4,16 +4,17 @@ const BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8012/api/vi
 
 interface TrackInfo { baseUrl: string; languageCode: string; kind?: string }
 interface CaptionEvent { tStartMs?: number; dDurationMs?: number; segs?: Array<{ utf8?: string }> }
+interface TranscriptItem { text: string; offset: number; duration: number }
 
 function cleanText(text: string): string {
   return text.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
 }
 
-async function fetchCaptionItems(tracks: TrackInfo[]): Promise<Array<{ text: string; offset: number; duration: number }>> {
+async function fetchCaptionItems(tracks: TrackInfo[]): Promise<TranscriptItem[]> {
   const track = tracks.find((t) => t.languageCode?.startsWith('en')) ?? tracks[0];
   if (!track?.baseUrl) throw new Error('No usable caption track found.');
 
-  // Fetch the caption file from the browser — timedtext API supports credentialed cross-origin requests
+  // Browser fetches with its own YouTube session cookies — timedtext API allows credentialed cross-origin
   const captionRes = await fetch(`${track.baseUrl}&fmt=json3`, { credentials: 'include' });
   if (!captionRes.ok) throw new Error(`Failed to fetch caption file (${captionRes.status}).`);
 
@@ -28,25 +29,11 @@ async function fetchCaptionItems(tracks: TrackInfo[]): Promise<Array<{ text: str
     .filter((e) => e.text);
 }
 
-export async function generateViralContent(url: string): Promise<ViralContentResponse> {
-  // Step 1: Vercel proxy scrapes the YouTube page for signed caption track URLs
-  const trackRes = await fetch(`/api/transcript?url=${encodeURIComponent(url)}`);
-  if (!trackRes.ok) {
-    let message = `Transcript fetch failed (${trackRes.status})`;
-    try { const d = await trackRes.json(); if (d?.error) message = d.error; } catch {}
-    throw new Error(message);
-  }
-  const { tracks, videoId } = await trackRes.json();
-
-  // Step 2: browser fetches the caption file using its own YouTube cookies
-  const items = await fetchCaptionItems(tracks);
-  if (!items.length) throw new Error('No transcript was found for this video.');
-
-  // Step 3: send transcript to Oracle backend for Groq processing
+async function callOracle(payload: Record<string, unknown>): Promise<ViralContentResponse> {
   const response = await fetch(`${BASE}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${videoId}`, transcript: items }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -60,4 +47,30 @@ export async function generateViralContent(url: string): Promise<ViralContentRes
   }
 
   return response.json() as Promise<ViralContentResponse>;
+}
+
+export async function generateViralContent(url: string): Promise<ViralContentResponse> {
+  // Step 1: Vercel proxy scrapes the YouTube watch page for signed caption track URLs
+  const trackRes = await fetch(`/api/transcript?url=${encodeURIComponent(url)}`);
+
+  if (trackRes.ok) {
+    const { tracks, videoId } = await trackRes.json();
+
+    // Step 2: Browser fetches caption file with its own YouTube cookies
+    let items: TranscriptItem[] = [];
+    try {
+      items = await fetchCaptionItems(tracks);
+    } catch {
+      // Caption fetch failed — fall through to Oracle yt-dlp fallback
+    }
+
+    if (items.length) {
+      // Step 3a: Send transcript to Oracle for Groq processing
+      return callOracle({ url: `https://www.youtube.com/watch?v=${videoId}`, transcript: items });
+    }
+  }
+
+  // Fallback: Vercel blocked or browser caption fetch failed → Oracle uses yt-dlp with stored cookies
+  // Oracle's server.js calls fetchTranscript(url) when transcript is absent from request body
+  return callOracle({ url });
 }
