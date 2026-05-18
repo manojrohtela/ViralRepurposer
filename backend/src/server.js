@@ -2,7 +2,6 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import Groq from "groq-sdk";
-import { YoutubeTranscript } from "youtube-transcript";
 
 const PORT = Number(process.env.PORT || 8012);
 const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
@@ -95,13 +94,62 @@ function isYouTubeUrl(value) {
   }
 }
 
+function extractVideoId(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "youtu.be") return parsed.pathname.slice(1);
+    return parsed.searchParams.get("v") || null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchTranscript(url) {
-  const rows = await YoutubeTranscript.fetchTranscript(url);
-  return rows.map((row) => ({
-    text: cleanText(row.text || ""),
-    offset: Number(row.offset || 0),
-    duration: Number(row.duration || 0),
-  }));
+  const videoId = extractVideoId(url);
+  if (!videoId) throw new Error("Could not extract video ID from URL.");
+
+  // Use YouTube's InnerTube API (ANDROID client bypasses most restrictions)
+  const playerRes = await fetch("https://www.youtube.com/youtubei/v1/player", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+      "X-YouTube-Client-Name": "3",
+      "X-YouTube-Client-Version": "19.09.37",
+    },
+    body: JSON.stringify({
+      videoId,
+      context: {
+        client: {
+          clientName: "ANDROID",
+          clientVersion: "19.09.37",
+          androidSdkVersion: 30,
+          hl: "en",
+          gl: "US",
+        },
+      },
+    }),
+  });
+
+  if (!playerRes.ok) throw new Error(`YouTube player API error: ${playerRes.status}`);
+  const playerData = await playerRes.json();
+
+  const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  if (!tracks?.length) throw new Error("No transcript available for this video.");
+
+  const track = tracks.find((t) => t.languageCode?.startsWith("en")) || tracks[0];
+  const captionRes = await fetch(`${track.baseUrl}&fmt=json3`);
+  if (!captionRes.ok) throw new Error("Failed to fetch caption data.");
+
+  const captionData = await captionRes.json();
+  return (captionData.events || [])
+    .filter((e) => e.segs?.length)
+    .map((e) => ({
+      text: cleanText(e.segs.map((s) => s.utf8 || "").join("")),
+      offset: e.tStartMs ?? 0,
+      duration: e.dDurationMs ?? 0,
+    }))
+    .filter((e) => e.text);
 }
 
 function formatTranscript(rows) {
