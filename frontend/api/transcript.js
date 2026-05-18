@@ -1,5 +1,5 @@
-// Vercel serverless function — fetches YouTube transcript by scraping the watch page.
-// Uses targeted JSON extraction to avoid parsing the huge ytInitialPlayerResponse.
+// Vercel serverless function — scrapes YouTube watch page to get signed captionTracks URLs.
+// Returns track metadata only; the browser fetches the actual caption file (credentials required).
 
 export const config = { maxDuration: 20 };
 
@@ -19,11 +19,7 @@ function extractVideoId(url) {
   }
 }
 
-function cleanText(text) {
-  return text.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
-}
-
-// String-aware JSON array extractor — handles { } [ ] inside strings.
+// String-aware JSON array extractor.
 function extractJsonArray(html, start) {
   let depth = 0, i = start, inStr = false, esc = false;
   while (i < html.length) {
@@ -68,33 +64,11 @@ export default async function handler(req, res) {
     if (!pageRes.ok) return res.status(502).json({ error: `YouTube page returned ${pageRes.status}.` });
     const html = await pageRes.text();
 
-    if (req.query?.debug === '1') {
-      const captionIdx = html.indexOf('"captionTracks":');
-      const arrayStart = captionIdx !== -1 ? html.indexOf('[', captionIdx) : -1;
-      const raw = arrayStart !== -1 ? extractJsonArray(html, arrayStart) : null;
-      let parseResult = null;
-      if (raw) { try { parseResult = JSON.parse(raw); } catch (e) { parseResult = { error: e.message, rawLast100: raw.slice(-100) }; } }
-      const enTrack = Array.isArray(parseResult) ? (parseResult.find(t => t.languageCode?.startsWith('en')) ?? parseResult[0]) : null;
-      let captionTest = null;
-      if (enTrack?.baseUrl) {
-        try {
-          const cr = await fetch(`${enTrack.baseUrl}&fmt=json3`);
-          const bodyText = await cr.text();
-          let cd = null;
-          try { cd = JSON.parse(bodyText); } catch {}
-          captionTest = { status: cr.status, contentType: cr.headers.get('content-type'), bodyLen: bodyText.length, bodyFirst200: bodyText.slice(0, 200), events: cd?.events?.length ?? 0 };
-        } catch (e) { captionTest = { error: e.message }; }
-      }
-      return res.status(200).json({ htmlLen: html.length, captionIdx, rawLen: raw?.length, enTrackUrl: enTrack?.baseUrl?.slice(0, 120), captionTest });
-    }
-
-    // Check playability status with a simple regex
     const statusMatch = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
     const status = statusMatch?.[1];
     if (status === 'LOGIN_REQUIRED') return res.status(403).json({ error: 'This video is age-restricted or members-only.' });
     if (status === 'UNPLAYABLE' || status === 'ERROR') return res.status(422).json({ error: 'This video is unavailable or private.' });
 
-    // Extract just the captionTracks array — much smaller than full ytInitialPlayerResponse
     const captionIdx = html.indexOf('"captionTracks":');
     if (captionIdx === -1) return res.status(422).json({ error: 'No transcript available for this video.' });
 
@@ -107,25 +81,9 @@ export default async function handler(req, res) {
     const tracks = JSON.parse(raw);
     if (!Array.isArray(tracks) || !tracks.length) return res.status(422).json({ error: 'No transcript available for this video.' });
 
-    const track = tracks.find((t) => t.languageCode?.startsWith('en')) ?? tracks[0];
-    if (!track?.baseUrl) return res.status(422).json({ error: 'No usable caption track found.' });
-
-    const captionRes = await fetch(`${track.baseUrl}&fmt=json3`);
-    if (!captionRes.ok) return res.status(502).json({ error: 'Failed to fetch captions.' });
-
-    const captionData = await captionRes.json();
-    const items = (captionData.events ?? [])
-      .filter((e) => e.segs?.length)
-      .map((e) => ({
-        text: cleanText(e.segs.map((s) => s.utf8 ?? '').join('')),
-        offset: e.tStartMs ?? 0,
-        duration: e.dDurationMs ?? 0,
-      }))
-      .filter((e) => e.text);
-
-    if (!items.length) return res.status(422).json({ error: 'Transcript is empty.' });
-
-    res.status(200).json({ items, videoId });
+    // Return track metadata — browser fetches actual captions using its own YouTube cookies
+    const simplified = tracks.map((t) => ({ baseUrl: t.baseUrl, languageCode: t.languageCode, kind: t.kind }));
+    res.status(200).json({ tracks: simplified, videoId });
   } catch (err) {
     res.status(500).json({ error: err.message ?? 'Failed to fetch transcript.' });
   }
