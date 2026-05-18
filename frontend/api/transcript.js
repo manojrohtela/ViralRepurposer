@@ -1,13 +1,20 @@
-// Vercel serverless function — scrapes YouTube watch page to get signed captionTracks URLs.
-// Returns track metadata only; the browser fetches the actual caption file (credentials required).
+// Vercel Edge Function — runs on Cloudflare edge IPs which YouTube doesn't bot-block.
+// Scrapes the watch page to get signed captionTracks URLs for the browser to use.
 
-export const config = { maxDuration: 20 };
+export const config = { runtime: 'edge' };
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...CORS, 'Content-Type': 'application/json' },
+  });
+}
 
 function extractVideoId(url) {
   try {
@@ -38,19 +45,17 @@ function extractJsonArray(html, start) {
   return null;
 }
 
-export default async function handler(req, res) {
+export default async function handler(req) {
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, CORS).end();
-    return;
+    return new Response(null, { status: 204, headers: CORS });
   }
 
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-
-  const url = req.query?.url;
-  if (!url) return res.status(400).json({ error: 'Missing url parameter.' });
+  const { searchParams } = new URL(req.url);
+  const url = searchParams.get('url');
+  if (!url) return json({ error: 'Missing url parameter.' }, 400);
 
   const videoId = extractVideoId(url);
-  if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL.' });
+  if (!videoId) return json({ error: 'Invalid YouTube URL.' }, 400);
 
   try {
     const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
@@ -61,36 +66,31 @@ export default async function handler(req, res) {
       },
     });
 
-    if (!pageRes.ok) return res.status(502).json({ error: `YouTube page returned ${pageRes.status}.` });
+    if (!pageRes.ok) return json({ error: `YouTube page returned ${pageRes.status}.` }, 502);
     const html = await pageRes.text();
 
     const statusMatch = html.match(/"playabilityStatus":\{"status":"([^"]+)"/);
     const status = statusMatch?.[1];
-    // UNPLAYABLE/ERROR are hard failures — video is truly unavailable
-    if (status === 'UNPLAYABLE' || status === 'ERROR') return res.status(422).json({ error: 'This video is unavailable or private.' });
-    // LOGIN_REQUIRED from a datacenter IP can be a false positive (bot detection, not true age restriction).
-    // Try to get captionTracks anyway — if they're present the browser can fetch them with its own cookies.
+    if (status === 'UNPLAYABLE' || status === 'ERROR') return json({ error: 'This video is unavailable or private.' }, 422);
 
     const captionIdx = html.indexOf('"captionTracks":');
-    // Only fall back to age-restricted error if captions are genuinely absent
     if (captionIdx === -1) {
-      if (status === 'LOGIN_REQUIRED') return res.status(403).json({ error: 'This video is age-restricted or members-only.' });
-      return res.status(422).json({ error: 'No transcript available for this video.' });
+      if (status === 'LOGIN_REQUIRED') return json({ error: 'This video is age-restricted or members-only.' }, 403);
+      return json({ error: 'No transcript available for this video.' }, 422);
     }
 
     const arrayStart = html.indexOf('[', captionIdx);
-    if (arrayStart === -1) return res.status(422).json({ error: 'No transcript available for this video.' });
+    if (arrayStart === -1) return json({ error: 'No transcript available for this video.' }, 422);
 
     const raw = extractJsonArray(html, arrayStart);
-    if (!raw) return res.status(422).json({ error: 'Could not parse caption tracks.' });
+    if (!raw) return json({ error: 'Could not parse caption tracks.' }, 422);
 
     const tracks = JSON.parse(raw);
-    if (!Array.isArray(tracks) || !tracks.length) return res.status(422).json({ error: 'No transcript available for this video.' });
+    if (!Array.isArray(tracks) || !tracks.length) return json({ error: 'No transcript available for this video.' }, 422);
 
-    // Return track metadata — browser fetches actual captions using its own YouTube cookies
     const simplified = tracks.map((t) => ({ baseUrl: t.baseUrl, languageCode: t.languageCode, kind: t.kind }));
-    res.status(200).json({ tracks: simplified, videoId });
+    return json({ tracks: simplified, videoId });
   } catch (err) {
-    res.status(500).json({ error: err.message ?? 'Failed to fetch transcript.' });
+    return json({ error: err.message ?? 'Failed to fetch transcript.' }, 500);
   }
 }
